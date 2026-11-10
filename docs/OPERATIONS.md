@@ -14,6 +14,14 @@
 
 Docker/Zeabur 的持久卷统一挂载 `/app/buckets`，配置路径为 `/app/buckets/config.yaml`。Zeabur 从 GitHub 部署时只需添加模型 Key、挂载该卷、绑定 HTTPS 域名，再从向导选择“公网安全模式”。不要在平台中长期保留 `OMBRE_MCP_REQUIRE_AUTH` 或 `OMBRE_TRANSPORT`，除非明确希望平台覆盖 Dashboard。
 
+### 受控的只读记忆迁移导出
+
+正常部署不会暴露迁移导出工具。只有在记忆所有者明确授权、且接收端已经准备好受限暂存目录时，才在服务环境变量中设置 `OMBRE_READONLY_EXPORT_TOOL_ENABLED=true` 并重启。此时主 MCP 连接会额外出现 `memory_export_page`：首次传空 `cursor`，后续原样传回 `next_cursor`，直到 `complete=true`。
+
+每一页都绑定同一个内容快照，并携带文件路径、字节偏移、SHA-256 与 UTF-8 原文。若导出期间源记忆变化，旧 cursor 会被拒绝，必须从空 cursor 重新开始，因此不会静默混合两个快照。导出范围包括所有 bucket Markdown（含归档、感受、计划、信件与 I/self）及其引用的不可变原文证据；不包含可重建的 `embeddings.db`，也不包含独立派生状态 `you.sqlite3` / `them.sqlite3`。工具没有任何写入、修改或删除路径。
+
+导出完成并核对文件数、总字节数、逐文件 SHA-256 后，删除该变量或改回 `false` 并重启，让主连接恢复原来的基础工具集合。不要把该开关当作长期公开下载接口。
+
 网络 MCP 关闭鉴权时，裸机由 `OMBRE_BIND_HOST` 表示进程监听地址，Docker 由 Compose 的宿主端口绑定决定，官方模板会把 `OMBRE_BIND_ADDRESS` 同步传入容器。OB 会诊断非回环、局域网/NAS 和未知 Docker 边界的匿名访问风险，但 2.11.1 起不再把明确的 `mcp_require_auth: false` 在内存中改回鉴权。Dashboard / 向导保存非回环免鉴权组合和内置 Tunnel 启动仍要求精确设置 `OMBRE_ALLOW_INSECURE_MCP=true`；直接由配置文件或平台环境变量关闭鉴权则由部署者自行保证外层边界。外部独立隧道无法由 OB 自动探测，应优先使用 OAuth 或静态 Token。
 
 `OMBRE_BIND_ADDRESS=127.0.0.1` 证明的是官方 Compose 的**宿主端口映射**不向局域网开放，不等于隔离同一 Docker 网络中的其他容器。免鉴权部署必须同时保证该容器网络没有不可信成员；多实例、自定义网络或无法确认的编排应使用 OAuth/静态 Token。

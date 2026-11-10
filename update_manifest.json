@@ -77,8 +77,8 @@
     },
     {
       "path": "src/import_memory.py",
-      "sha256": "9b37820cef77aa98a4668ed3f1bfc330a361792a007d2802b0e0181cc51c7a80",
-      "size": 60715
+      "sha256": "726071f2fc3c1d49727a8373ce0313a85ecd499d6fdf17f5951debde6d512ba9",
+      "size": 60727
     },
     {
       "path": "src/migrate_engine.py",
@@ -427,8 +427,8 @@
     },
     {
       "path": "src/ombrebrain/storage/backup_archive.py",
-      "sha256": "838d6c769bc7073e5da2e06dc96eea44438bdda0e58ad6fdbf6c8cef07a2f453",
-      "size": 36522
+      "sha256": "b8906797ad5486eb283754b6030d5e0144e3f941b95d99087706b7c4bd76ade5",
+      "size": 44484
     },
     {
       "path": "src/ombrebrain/storage/bucket_paths.py",
@@ -562,8 +562,8 @@
     },
     {
       "path": "src/server.py",
-      "sha256": "02107c88da366840c08b98bf8493910c57fb01f7cede781d431d187c914b83ed",
-      "size": 80622
+      "sha256": "df1a0f5f8b40cc6ef3b251a35471e68112957b26dcb2c2dba9c599a6e04a0ad8",
+      "size": 82023
     },
     {
       "path": "src/server_app.py",
@@ -719,6 +719,11 @@
       "path": "src/tools/i/core.py",
       "sha256": "f048160cbccf668fcefdeb63ffbcc26fb233943ae5b3e317004044742c2a54e3",
       "size": 26729
+    },
+    {
+      "path": "src/tools/memory_export.py",
+      "sha256": "cc249c6dd24e35e951fe2bf5bbf68fd108ee6e6e37c91f79b7bed1808373d61d",
+      "size": 1716
     },
     {
       "path": "src/tools/plan/__init__.py",
@@ -897,5 +902,5 @@
     }
   ],
   "rollout_strategy": "single-node",
-  "version": "3.6.14"
+  "version": "3.6.15"
 }
