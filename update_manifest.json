@@ -427,8 +427,8 @@
     },
     {
       "path": "src/ombrebrain/storage/backup_archive.py",
-      "sha256": "b8906797ad5486eb283754b6030d5e0144e3f941b95d99087706b7c4bd76ade5",
-      "size": 44484
+      "sha256": "bc170ebbbb89ec851f2ece024ceebb92aaa8454d89e2e6a529731ddc919d1f8a",
+      "size": 45732
     },
     {
       "path": "src/ombrebrain/storage/bucket_paths.py",

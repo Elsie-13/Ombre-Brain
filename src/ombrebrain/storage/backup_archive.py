@@ -375,7 +375,7 @@ def _parse_readonly_export_cursor(
 
 
 def _utf8_prefix(data: bytes, start: int, byte_limit: int) -> tuple[str, int]:
-    """Return a non-empty UTF-8 prefix ending on a code-point boundary."""
+    """Return a UTF-8 prefix ending on a code-point boundary when one fits."""
 
     end = min(len(data), start + byte_limit)
     while end > start:
@@ -387,7 +387,7 @@ def _utf8_prefix(data: bytes, start: int, byte_limit: int) -> tuple[str, int]:
             if exc.reason != "unexpected end of data":
                 raise BackupArchiveError("只读导出遇到非 UTF-8 记忆文件") from exc
             end = start + exc.start
-    raise BackupArchiveError("只读导出页大小不足以容纳一个 UTF-8 字符")
+    return "", start
 
 
 def build_readonly_text_export_page(
@@ -448,7 +448,7 @@ def build_readonly_text_export_page(
         entry = entries[file_index]
         path = str(entry["path"])
         data = files[path]
-        if byte_offset == len(data):
+        if data and byte_offset == len(data):
             # A valid cursor may point exactly at EOF after an earlier page.
             file_index += 1
             byte_offset = 0
@@ -459,6 +459,10 @@ def build_readonly_text_export_page(
             end = 0
         else:
             content, end = _utf8_prefix(data, byte_offset, remaining)
+            if end == byte_offset:
+                if page_items:
+                    break
+                raise BackupArchiveError("只读导出页大小不足以容纳一个 UTF-8 字符")
 
         complete_file = end == len(data)
         page_items.append(

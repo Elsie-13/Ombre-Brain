@@ -107,6 +107,55 @@ def test_readonly_export_does_not_change_vault_files(tmp_path):
     assert after == before
 
 
+def test_readonly_export_starts_a_new_page_when_next_utf8_character_does_not_fit(
+    tmp_path,
+):
+    vault = tmp_path / "vault"
+    first = vault / "dynamic" / "general" / "a.md"
+    second = vault / "dynamic" / "general" / "b.md"
+    first.parent.mkdir(parents=True)
+    first_bytes = b"a" * 1023
+    second_bytes = "\u4e2d".encode("utf-8")
+    first.write_bytes(first_bytes)
+    second.write_bytes(second_bytes)
+
+    pages, reconstructed = _read_every_page(vault)
+
+    assert reconstructed == {
+        "buckets/dynamic/general/a.md": first_bytes,
+        "buckets/dynamic/general/b.md": second_bytes,
+    }
+    assert len(pages) == 2
+    assert pages[0]["page_raw_bytes"] == 1023
+    assert pages[0]["complete"] is False
+
+
+def test_readonly_export_emits_empty_files(tmp_path):
+    vault = tmp_path / "vault"
+    empty = vault / "dynamic" / "general" / "empty.md"
+    empty.parent.mkdir(parents=True)
+    empty.write_bytes(b"")
+
+    pages, reconstructed = _read_every_page(vault)
+
+    path = "buckets/dynamic/general/empty.md"
+    assert reconstructed == {path: b""}
+    assert pages[0]["total_files"] == 1
+    assert pages[0]["items"] == [
+        {
+            "path": path,
+            "kind": "memory_markdown",
+            "archived": False,
+            "size": 0,
+            "sha256": hashlib.sha256(b"").hexdigest(),
+            "byte_offset": 0,
+            "byte_length": 0,
+            "complete_file": True,
+            "content": "",
+        }
+    ]
+
+
 def test_readonly_export_rejects_cursor_after_source_changes(tmp_path):
     vault = tmp_path / "vault"
     _write_export_fixture(vault)
