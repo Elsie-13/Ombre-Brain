@@ -66,6 +66,15 @@ MIGRATE_MAX_YOU_DB_BYTES = 128 * MIB
 MIGRATE_MAX_THEM_DB_BYTES = 128 * MIB
 MIGRATE_MIN_FREE_RESERVE_BYTES = 64 * MIB
 
+# The MCP migration reader deliberately returns modest UTF-8 pages rather than
+# a ZIP or an unbounded JSON response.  It exposes only the source-of-truth
+# Markdown and its immutable evidence files; rebuildable indexes and the
+# separately scoped You/Them projections stay on the normal backup route.
+READONLY_EXPORT_DEFAULT_PAGE_BYTES = 128 * 1024
+READONLY_EXPORT_MAX_PAGE_BYTES = 256 * 1024
+READONLY_EXPORT_MAX_PAGE_ITEMS = 64
+READONLY_EXPORT_CURSOR_VERSION = "v1"
+
 
 class BackupArchiveError(ValueError):
     """The backup cannot be trusted or safely processed."""
@@ -323,6 +332,203 @@ def _build_manifest(files: dict[str, bytes], *, created_at: str, version: str) -
         "file_count": len(entries),
         "total_bytes": sum(item["size"] for item in entries),
         "files": entries,
+    }
+
+
+def _readonly_export_snapshot_id(entries: list[dict[str, Any]]) -> str:
+    """Bind a paging cursor to one exact set of source bytes."""
+
+    digest = hashlib.sha256()
+    for entry in entries:
+        digest.update(str(entry["path"]).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(entry["size"]).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(entry["sha256"]).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _parse_readonly_export_cursor(
+    cursor: str,
+    *,
+    snapshot_id: str,
+    file_count: int,
+) -> tuple[int, int]:
+    if not cursor:
+        return 0, 0
+    parts = cursor.split(":")
+    if len(parts) != 4 or parts[0] != READONLY_EXPORT_CURSOR_VERSION:
+        raise BackupArchiveError("只读导出 cursor 格式无效，请从空 cursor 重新开始")
+    if parts[1] != snapshot_id:
+        raise BackupArchiveError("导出期间 OB 内容发生变化，请从空 cursor 重新开始")
+    try:
+        file_index = int(parts[2])
+        byte_offset = int(parts[3])
+    except ValueError as exc:
+        raise BackupArchiveError("只读导出 cursor 格式无效，请从空 cursor 重新开始") from exc
+    if file_index < 0 or file_index > file_count or byte_offset < 0:
+        raise BackupArchiveError("只读导出 cursor 超出范围，请从空 cursor 重新开始")
+    if file_index == file_count and byte_offset:
+        raise BackupArchiveError("只读导出 cursor 超出范围，请从空 cursor 重新开始")
+    return file_index, byte_offset
+
+
+def _utf8_prefix(data: bytes, start: int, byte_limit: int) -> tuple[str, int]:
+    """Return a UTF-8 prefix ending on a code-point boundary when one fits."""
+
+    end = min(len(data), start + byte_limit)
+    while end > start:
+        try:
+            return data[start:end].decode("utf-8"), end
+        except UnicodeDecodeError as exc:
+            # Full-file UTF-8 validation happens before paging, so the only
+            # possible failure here is a multibyte character cut at ``end``.
+            if exc.reason != "unexpected end of data":
+                raise BackupArchiveError("只读导出遇到非 UTF-8 记忆文件") from exc
+            end = start + exc.start
+    return "", start
+
+
+def build_readonly_text_export_page(
+    buckets_dir: str,
+    *,
+    cursor: str = "",
+    max_bytes: int = READONLY_EXPORT_DEFAULT_PAGE_BYTES,
+) -> dict[str, Any]:
+    """Return one stable, verifiable, read-only page of OB source memory.
+
+    The function never writes to the vault.  Cursors are bound to the exact
+    path/size/SHA-256 manifest, so a concurrent edit is reported rather than
+    silently mixing two different snapshots.  Large UTF-8 files are split on
+    character boundaries and can be reconstructed by ``path`` +
+    ``byte_offset``.
+    """
+
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
+        raise BackupArchiveError("max_bytes 必须是整数")
+    if max_bytes < 1024 or max_bytes > READONLY_EXPORT_MAX_PAGE_BYTES:
+        raise BackupArchiveError(
+            f"max_bytes 必须在 1024 到 {READONLY_EXPORT_MAX_PAGE_BYTES} 之间"
+        )
+
+    files = _collect_markdown(buckets_dir)
+    files.update(_collect_sources(Path(buckets_dir).resolve()))
+    _validate_source_reference_closure(files)
+    if len(files) + 1 > MIGRATE_MAX_MEMBERS:
+        raise BackupArchiveError(f"记忆文件过多（上限 {MIGRATE_MAX_MEMBERS - 1}）")
+
+    total_bytes = 0
+    for path, data in files.items():
+        member_limit = _migration_member_limit(path)
+        if len(data) > member_limit:
+            raise BackupArchiveError(f"记忆文件过大: {path}")
+        total_bytes += len(data)
+        if total_bytes > MIGRATE_MAX_TOTAL_UNCOMPRESSED_BYTES:
+            raise BackupArchiveError("记忆源文件总量超过 512 MiB 上限")
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise BackupArchiveError(f"记忆文件不是 UTF-8: {path}") from exc
+
+    manifest = _build_manifest(files, created_at="", version="")
+    entries = manifest["files"]
+    snapshot_id = _readonly_export_snapshot_id(entries)
+    file_index, byte_offset = _parse_readonly_export_cursor(
+        str(cursor or "").strip(),
+        snapshot_id=snapshot_id,
+        file_count=len(entries),
+    )
+    if file_index < len(entries) and byte_offset > int(entries[file_index]["size"]):
+        raise BackupArchiveError("只读导出 cursor 超出文件范围，请从空 cursor 重新开始")
+
+    page_items: list[dict[str, Any]] = []
+    remaining = max_bytes
+    while file_index < len(entries) and len(page_items) < READONLY_EXPORT_MAX_PAGE_ITEMS:
+        entry = entries[file_index]
+        path = str(entry["path"])
+        data = files[path]
+        if data and byte_offset == len(data):
+            # A valid cursor may point exactly at EOF after an earlier page.
+            file_index += 1
+            byte_offset = 0
+            continue
+
+        if not data:
+            content = ""
+            end = 0
+        else:
+            content, end = _utf8_prefix(data, byte_offset, remaining)
+            if end == byte_offset:
+                if page_items:
+                    break
+                raise BackupArchiveError("只读导出页大小不足以容纳一个 UTF-8 字符")
+
+        complete_file = end == len(data)
+        page_items.append(
+            {
+                "path": path,
+                "kind": (
+                    "memory_markdown" if path.startswith("buckets/")
+                    else "source_evidence"
+                ),
+                "archived": path.startswith("buckets/archive/"),
+                "size": int(entry["size"]),
+                "sha256": str(entry["sha256"]),
+                "byte_offset": byte_offset,
+                "byte_length": end - byte_offset,
+                "complete_file": complete_file,
+                "content": content,
+            }
+        )
+        remaining -= end - byte_offset
+        if complete_file:
+            file_index += 1
+            byte_offset = 0
+        else:
+            byte_offset = end
+            break
+        if remaining <= 0:
+            break
+
+    complete = file_index >= len(entries)
+    next_cursor = ""
+    if not complete:
+        next_cursor = (
+            f"{READONLY_EXPORT_CURSOR_VERSION}:{snapshot_id}:"
+            f"{file_index}:{byte_offset}"
+        )
+
+    bucket_count = sum(1 for item in entries if item["path"].startswith("buckets/"))
+    source_count = sum(1 for item in entries if item["path"].startswith("sources/"))
+    archive_count = sum(
+        1 for item in entries if item["path"].startswith("buckets/archive/")
+    )
+    return {
+        "schema_version": 1,
+        "kind": "ombre-brain-readonly-memory-export-page",
+        "readonly": True,
+        "snapshot_id": snapshot_id,
+        "total_files": len(entries),
+        "total_bytes": total_bytes,
+        "memory_files": bucket_count,
+        "archive_memory_files": archive_count,
+        "source_evidence_files": source_count,
+        "page_raw_bytes": max_bytes - remaining,
+        "items": page_items,
+        "next_cursor": next_cursor,
+        "complete": complete,
+        "scope": {
+            "included": [
+                "all bucket Markdown including archive, feel, plans, letters and I/self records",
+                "immutable source evidence referenced by those memories",
+            ],
+            "excluded_rebuildable_or_separate_state": [
+                "embeddings.db",
+                "you/you.sqlite3",
+                "them/them.sqlite3",
+            ],
+        },
     }
 
 

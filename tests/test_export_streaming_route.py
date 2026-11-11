@@ -50,6 +50,7 @@ async def _consume_response(response, *, headers=None, fail_send=False):
     await response(
         {
             "type": "http",
+            "asgi": {"spec_version": "2.4"},
             "method": "GET",
             "path": "/api/export",
             "headers": headers or [],

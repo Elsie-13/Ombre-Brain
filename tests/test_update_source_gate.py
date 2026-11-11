@@ -151,7 +151,7 @@ def test_legacy_archive_compatibility_requires_284_release_lock():
     normalized = lock_bytes.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
     assert hashlib.sha256(normalized).hexdigest() == (
-        "ae0255bd41e5ceb45694244017a9b0b2dc1e4c445ab027cec1f7183ad969700a"
+        "21b1e2a4eaa8a48d74b7995e8655721bbfe65cc694571f4cbb4c8b5654832694"
     ), (
         "requirements.lock.txt 已变化：确认这次变化是否会影响还没升级过的旧版"
         "热更新器（尤其 v2.8.4 之前、缺少 lock 感知回退逻辑的实例），评估后再把"
@@ -303,7 +303,7 @@ def test_runtime_lock_probe_accepts_repository_release_lock_syntax(monkeypatch):
     lock = (repo_root / "requirements.lock.txt").read_bytes()
 
     assert meta._runtime_satisfies_locked_versions(lock) is True
-    assert b"mcp==1.29.0" in captured["content"]
+    assert b"mcp==1.30.0" in captured["content"]
 
 
 def test_runtime_lock_probe_nonzero_result_fails_closed_and_cleans_temp(

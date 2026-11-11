@@ -74,6 +74,7 @@ from tools import dream as _t_dream
 from tools import i as _t_i
 from tools import them as _t_them
 from tools import you as _t_you
+from tools import memory_export as _t_memory_export
 
 # --- Load config & init logging / 加载配置 & 初始化日志 ---
 config = load_config()
@@ -377,6 +378,13 @@ mcp = FastMCP(
     stateless_http=True,
     lifespan=_stdio_lifespan if config.get("transport", "stdio") == "stdio" else None,
 )
+
+# The migration reader is opt-in deployment wiring, not a seventeenth core
+# memory behavior.  It stays absent everywhere unless the owner explicitly
+# enables it for a controlled export window.
+_READONLY_EXPORT_TOOL_ENABLED = os.environ.get(
+    "OMBRE_READONLY_EXPORT_TOOL_ENABLED", ""
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # 3.4.0：信件并回主链路，`/mcp-extra` 再次退役。
 #
@@ -1132,6 +1140,28 @@ async def pulse(include_archive: Optional[bool] = False) -> str:
     )
 
 
+async def memory_export_page(
+    cursor: Optional[str] = "",
+    max_bytes: Optional[int] = 131072,
+) -> str:
+    """只读分批导出 OB 的全部源记忆与原文证据，供已授权的 L5 迁移整理使用。
+
+    第一次使用空 cursor；以后原样传回 next_cursor，直到 complete=true。
+    每页都带 snapshot_id、文件路径、字节偏移、SHA-256 与 UTF-8 原文；若导出
+    期间 OB 内容变化，工具会要求从空 cursor 重来，避免混合两个快照。
+    max_bytes 默认 131072，允许 1024..262144。此工具不会写入、修改或删除 OB。
+    """
+    return await _with_notice(
+        _t_memory_export.page(cursor=cursor, max_bytes=max_bytes),
+        op="memory_export_page",
+        args={"cursor_present": bool(cursor), "max_bytes": max_bytes},
+    )
+
+
+if _READONLY_EXPORT_TOOL_ENABLED:
+    mcp.tool()(memory_export_page)
+
+
 @mcp.tool()
 async def plan(
     content: str,
@@ -1306,7 +1336,7 @@ def _forbid_unknown_tool_arguments(tool_name: str) -> None:
     public_tool.parameters = arg_model.model_json_schema()
 
 
-for _strict_tool_name in (
+_strict_tool_names = (
     "breath_search",
     "breath_advanced",
     "hold",
@@ -1321,7 +1351,11 @@ for _strict_tool_name in (
     "letter_read",
     "feel",
     "I",
-):
+)
+if _READONLY_EXPORT_TOOL_ENABLED:
+    _strict_tool_names += ("memory_export_page",)
+
+for _strict_tool_name in _strict_tool_names:
     try:
         _forbid_unknown_tool_arguments(_strict_tool_name)
     except (AttributeError, RuntimeError, TypeError, ValueError) as _schema_exc:
