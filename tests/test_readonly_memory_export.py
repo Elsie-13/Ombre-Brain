@@ -130,6 +130,7 @@ def test_readonly_export_starts_a_new_page_when_next_utf8_character_does_not_fit
     assert pages[0]["complete"] is False
 
 
+# Empty source files are evidence too and must survive reconstruction.
 def test_readonly_export_emits_empty_files(tmp_path):
     vault = tmp_path / "vault"
     empty = vault / "dynamic" / "general" / "empty.md"
